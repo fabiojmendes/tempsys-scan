@@ -7,8 +7,8 @@ use std::{
 };
 
 use anyhow::bail;
-use bluer::{AdapterEvent, Session};
-use byteorder::{ByteOrder, LittleEndian};
+use bluer::{AdapterEvent, DiscoveryFilter, Session};
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use futures::StreamExt;
 use log::Level;
 use rumqttc::{AsyncClient, MqttOptions, QoS};
@@ -48,7 +48,7 @@ impl Display for DeviceType {
             Self::Freezer => "freezer",
             Self::Unknown => "unknown",
         };
-        write!(f, "{}", name)
+        write!(f, "{name}")
     }
 }
 
@@ -149,79 +149,87 @@ async fn main() -> anyhow::Result<()> {
 
     let (client, mut eventloop) = AsyncClient::new(opts, 10);
 
+    let session = Session::new().await?;
+    let adapter = session.default_adapter().await?;
+    log::info!(
+        "Discovering devices using Bluetooth adapater {}",
+        adapter.name()
+    );
+    adapter
+        .set_discovery_filter(DiscoveryFilter {
+            duplicate_data: false,
+            ..Default::default()
+        })
+        .await?;
+    adapter.set_powered(true).await?;
+
     let bt_handle = task::spawn(async move {
-        let session = Session::new().await?;
-        let adapter = session.default_adapter().await?;
-        log::info!(
-            "Discovering devices using Bluetooth adapater {}",
-            adapter.name()
-        );
-        adapter.set_powered(true).await?;
-        adapter
-            .set_discovery_filter(bluer::DiscoveryFilter {
-                duplicate_data: false,
-                pattern: Some(String::from("Tempsys")),
-                ..Default::default()
-            })
-            .await?;
-
-        let mut last_counts = HashMap::new();
-
         let mut device_events = adapter.discover_devices_with_changes().await?;
         while let Some(evt) = device_events.next().await {
             if let AdapterEvent::DeviceAdded(addr) = evt {
                 let device = adapter.device(addr)?;
                 log::trace!("Device: {:?} name: {:?}", device, device.name().await?);
                 let rssi = device.rssi().await?.unwrap_or(0);
-                match device
-                    .manufacturer_data()
-                    .await?
-                    .and_then(|mut d| d.remove(&TEMPSYS_MANUF_ID))
-                    .map(|data| TempReading::try_from(&*data))
-                {
-                    Some(Ok(reading)) => {
-                        if Some(&reading.counter) == last_counts.get(&addr) {
-                            continue;
+                let timestamp = timestamp_nanos();
+                let addr_string = addr.to_string();
+                let unknown_device = DeviceConfig {
+                    addr: addr_string.clone(),
+                    name: addr_string.clone(),
+                    device_type: DeviceType::Unknown,
+                };
+                let sender = addr_map.get(&addr_string).unwrap_or(&unknown_device);
+
+                match device.manufacturer_data().await? {
+                    Some(mut mfg) => {
+                        if let Some(data) = mfg.remove(&TEMPSYS_MANUF_ID) {
+                            match TempReading::try_from(&data[..]) {
+                                Ok(reading) => {
+                                    let payload = match reading.temperature() {
+                                        Ok(temp) => {
+                                            format!("sensor,addr={},name={},type={},version={} temperature={:.2},voltage={},rssi={} {}",
+                                                sender.addr, sender.name, sender.device_type, reading.version, temp, reading.voltage, rssi, timestamp)
+                                        }
+                                        Err(e) => {
+                                            log::warn!("Error parsing temperature: {e}");
+                                            format!("sensor,addr={},name={},type={},version={} voltage={},rssi={} {}",
+                                                sender.addr, sender.name, sender.device_type, reading.version, reading.voltage, rssi, timestamp)
+                                        }
+                                    };
+                                    log::info!("{} (counter={})", payload, reading.counter);
+                                    client
+                                        .publish(&mqtt.topic, QoS::AtLeastOnce, false, payload)
+                                        .await
+                                        .unwrap();
+                                }
+                                Err(e) => {
+                                    log::error!("Error parsing the reading {e}");
+                                }
+                            }
                         }
-                        last_counts.insert(addr, reading.counter);
-                        let timestamp = timestamp_nanos();
-                        let addr_string = addr.to_string();
-                        let unknown_device = DeviceConfig {
-                            addr: addr_string.clone(),
-                            name: addr_string.clone(),
-                            device_type: DeviceType::Unknown,
-                        };
-                        let sender = addr_map.get(&addr_string).unwrap_or(&unknown_device);
-                        let payload = match reading.temperature() {
-                            Ok(temp) => {
-                                format!("sensor,addr={},name={},type={},version={} temperature={:.2},voltage={},rssi={} {}",
-                                            sender.addr, sender.name, sender.device_type,  reading.version, temp, reading.voltage, rssi, timestamp)
-                            }
-                            Err(e) => {
-                                log::warn!("Error parsing temperature: {}", e);
-                                format!(
-                                    "sensor,addr={},name={},type={},version={} voltage={},rssi={} {}",
-                                    sender.addr,
-                                    sender.name,
-                                    sender.device_type,
-                                    reading.version,
-                                    reading.voltage,
-                                    rssi,
-                                    timestamp
-                                )
-                            }
-                        };
-                        log::info!("{} (counter={})", payload, reading.counter);
-                        client
-                            .publish(&mqtt.topic, QoS::AtLeastOnce, false, payload)
-                            .await
-                            .unwrap();
-                    }
-                    Some(Err(e)) => {
-                        log::error!("Error reading manufacturer data {}", e);
+
+                        if let Some(groove_data) = mfg.remove(&0xEC88) {
+                            let mut base = groove_data[1..4].to_owned();
+                            base.push(0x00);
+
+                            log::debug!("Data: {groove_data:?}, Base: {base:?}");
+                            let encoded = BigEndian::read_i32(&base) >> 8;
+                            let temperature = encoded as f32 / 10000.0;
+                            let humidity = (encoded % 1000) as f32 / 10.0;
+                            let battery = groove_data[4];
+                            log::debug!(
+                                "Temp: {temperature}, Humidity: {humidity}, Battery: {battery}%",
+                            );
+                            let payload = format!("sensor,addr={},name={},type={} temperature={:.2},humidity={},battery={},rssi={} {}",
+                                                sender.addr, sender.name, sender.device_type, temperature, humidity,battery, rssi, timestamp);
+                            log::info!("{payload}");
+                            client
+                                .publish(&mqtt.topic, QoS::AtLeastOnce, false, payload)
+                                .await
+                                .unwrap();
+                        }
                     }
                     None => {
-                        log::warn!("Manufacurer data not found");
+                        log::trace!("Manufacurer data not found");
                     }
                 }
             }
@@ -232,9 +240,9 @@ async fn main() -> anyhow::Result<()> {
 
     loop {
         match eventloop.poll().await {
-            Ok(notification) => log::debug!("Received: {:?}", notification),
+            Ok(notification) => log::debug!("Received: {notification:?}"),
             Err(e) => {
-                log::error!("Error on mqtt: {}", e);
+                log::error!("Error on mqtt: {e}");
                 bail!(e);
             }
         }

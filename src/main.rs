@@ -207,20 +207,23 @@ async fn main() -> anyhow::Result<()> {
                             }
                         }
 
-                        if let Some(groove_data) = mfg.remove(&0xEC88) {
-                            let mut base = groove_data[1..4].to_owned();
-                            base.push(0x00);
-
-                            log::debug!("Data: {groove_data:?}, Base: {base:?}");
-                            let encoded = BigEndian::read_i32(&base) >> 8;
-                            let temperature = encoded as f32 / 10000.0;
-                            let humidity = (encoded % 1000) as f32 / 10.0;
-                            let battery = groove_data[4];
+                        if let Some(data) = mfg.remove(&0xEC88) {
+                            // Data conversion reference:
+                            // https://github.com/Heckie75/govee-h5075-thermo-hygrometer/blob/main/API.md#decode-temperature-and-humitity
+                            log::debug!("Groove Data (hex): {data:02x?}");
+                            let encoded = BigEndian::read_u32(&data[0..4]);
+                            let temperature = if encoded & 0x800000 == 0 {
+                                encoded as f32 / 10000.0
+                            } else {
+                                0.0 - (encoded ^ 0x800000) as f32 / 10000.0
+                            };
+                            let humidity = ((encoded & 0x7fffff) % 1000) as f32 / 10.0;
+                            let battery = data[4];
                             log::debug!(
                                 "Temp: {temperature}, Humidity: {humidity}, Battery: {battery}%",
                             );
                             let payload = format!("sensor,addr={},name={},type={} temperature={:.2},humidity={},battery={},rssi={} {}",
-                                                sender.addr, sender.name, sender.device_type, temperature, humidity,battery, rssi, timestamp);
+                                            sender.addr, sender.name, sender.device_type, temperature, humidity,battery, rssi, timestamp);
                             log::info!("{payload}");
                             client
                                 .publish(&mqtt.topic, QoS::AtLeastOnce, false, payload)

@@ -1,6 +1,6 @@
 [package]
 name = "tempsys-scan"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -14,8 +14,8 @@ tokio = "1"
 env_logger = "0.11"
 log = "0.4"
 byteorder = "1"
-toml = "0.8"
+toml = "0.9"
 serde = { version = "1", features = ["derive"] }
 
 [build-dependencies]
-built = { version = "0.7", features = ["git2", "semver"] }
+built = { version = "0.8", features = ["git2", "semver"] }

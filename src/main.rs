@@ -38,6 +38,7 @@ struct DeviceConfig {
 enum DeviceType {
     Fridge,
     Freezer,
+    Room,
     Unknown,
 }
 
@@ -46,6 +47,7 @@ impl Display for DeviceType {
         let name = match self {
             Self::Fridge => "fridge",
             Self::Freezer => "freezer",
+            Self::Room => "room",
             Self::Unknown => "unknown",
         };
         write!(f, "{name}")

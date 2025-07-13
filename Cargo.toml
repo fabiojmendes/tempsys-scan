@@ -16,6 +16,7 @@ log = "0.4"
 byteorder = "1"
 toml = "0.9"
 serde = { version = "1", features = ["derive"] }
+hostname = "0.4"
 
 [build-dependencies]
 built = { version = "0.8", features = ["git2", "semver"] }

@@ -19,7 +19,6 @@ const TEMPSYS_MANUF_ID: u16 = 0xffff;
 
 #[derive(Deserialize, Debug)]
 struct MqttConfig {
-    id: String,
     host: String,
     port: u16,
     username: String,
@@ -145,8 +144,11 @@ async fn main() -> anyhow::Result<()> {
         .map(|d| (d.addr.clone(), d))
         .collect();
 
+    let hostname = hostname::get()?;
+    let hostname = hostname.into_string().unwrap();
+
     let mqtt = config.mqtt;
-    let mut opts = MqttOptions::new(mqtt.id, mqtt.host, mqtt.port);
+    let mut opts = MqttOptions::new(&hostname, mqtt.host, mqtt.port);
     opts.set_credentials(mqtt.username, mqtt.password);
 
     let (client, mut eventloop) = AsyncClient::new(opts, 10);
@@ -188,13 +190,13 @@ async fn main() -> anyhow::Result<()> {
                                 Ok(reading) => {
                                     let payload = match reading.temperature() {
                                         Ok(temp) => {
-                                            format!("sensor,addr={},name={},type={},version={} temperature={:.2},voltage={},rssi={} {}",
-                                                sender.addr, sender.name, sender.device_type, reading.version, temp, reading.voltage, rssi, timestamp)
+                                            format!("sensor,host={},addr={},name={},type={},version={} temperature={:.2},voltage={},rssi={} {}",
+                                                &hostname, sender.addr, sender.name, sender.device_type, reading.version, temp, reading.voltage, rssi, timestamp)
                                         }
                                         Err(e) => {
                                             log::warn!("Error parsing temperature: {e}");
-                                            format!("sensor,addr={},name={},type={},version={} voltage={},rssi={} {}",
-                                                sender.addr, sender.name, sender.device_type, reading.version, reading.voltage, rssi, timestamp)
+                                            format!("sensor,host={},addr={},name={},type={},version={} voltage={},rssi={} {}",
+                                                &hostname, sender.addr, sender.name, sender.device_type, reading.version, reading.voltage, rssi, timestamp)
                                         }
                                     };
                                     log::info!("{} (counter={})", payload, reading.counter);
@@ -224,8 +226,8 @@ async fn main() -> anyhow::Result<()> {
                             log::debug!(
                                 "Temp: {temperature}, Humidity: {humidity}, Battery: {battery}%",
                             );
-                            let payload = format!("sensor,addr={},name={},type={} temperature={:.2},humidity={},battery={},rssi={} {}",
-                                            sender.addr, sender.name, sender.device_type, temperature, humidity,battery, rssi, timestamp);
+                            let payload = format!("sensor,host={},addr={},name={},type={} temperature={:.2},humidity={},battery={},rssi={} {}",
+                                                &hostname, sender.addr, sender.name, sender.device_type, temperature, humidity,battery, rssi, timestamp);
                             log::info!("{payload}");
                             client
                                 .publish(&mqtt.topic, QoS::AtLeastOnce, false, payload)

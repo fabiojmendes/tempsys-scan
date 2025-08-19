@@ -1,11 +1,11 @@
 <!-- vim: set tw=80: -->
 
-# Tempsys Scan
+# Tempsys scan
 
-This repository contains the code for the scanning component of Tempsys. It will
-read the advertising events emitted by the
-[tempsys-firmware](https://github.com/fabiojmendes/tempsys-firmware) and publish
-it to a MQTT broker.
+This repository contains the code for the scanning component of Tempsys. It
+reads the advertising events emitted by the
+[tempsys-firmware](https://github.com/fabiojmendes/tempsys-firmware) and
+publishes them to a MQTT broker.
 
 ## Configuration
 
@@ -31,14 +31,15 @@ topic = "tempsys/temperature"
 ## Build
 
 This code is meant to run on a Raspberry Pi device, so a
-[cross](https://github.com/cross-rs/cross) configuration is provided for easy of
+[cross](https://github.com/cross-rs/cross) configuration is provided for ease of
 use.
 
-To build it locally you will need to install the dependencies `libdbus-1-dev`
-and `pkg-config`.
+To build it locally you need to install the dependencies `libdbus-1-dev` and
+`pkg-config`.
 
 ## WIP
 
 - Breakdown code in modules
+- Read advertising packages from different devices
 - Improve error handling
-- Parse CLI arguments?
+- Support CLI arguments?
